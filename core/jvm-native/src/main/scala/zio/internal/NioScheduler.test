@@ -155,6 +155,62 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
             submitBlocking(runnable)
         } else {
             var notify = true
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
+            } else if ((worker.nextRunnable eq null) && worker.localQueue.isEmpty()) {
+                val fromGlobal = globalQueue.poll()
+                if (fromGlobal eq null) {
+                    worker.nextRunnable = runnable
+                    notify = false
+                } else {
+                    worker.nextRunnable = fromGlobal
+                    worker.localQueue.offer(runnable)
+                }
+            } else if (!worker.localQueue.offer(runnable)) {    // why not declare consider
+                handleFullWorkerQueue(worker, runnable)
+            }
+
+            if (notify) {
+                val currentState = state.get
+                maybeUnparkWorker(currentState)
+            }
+
+            true
+        }
+    }
+
+    private def handleFullWorkerQueue(worker: NioScheduler.Worker, runnable: Runnable): Unit = {
+        val rnd    = ThreadLocalRandom.current
+        val polled = worker.localQueue.pollUpTo(128)
+
+        globalQueue.offerAll(polled, rnd)
+
+        val accepted = worker.localQueue.offer(runnable)
+        
+        if (!accepted) {
+            globalQueue.offer(runnable, rnd)
+        }
+
+    }
+
+    private[this] def isBlocking(worker: NioScheduler.Worker, runnable: Runnable): Boolean = {
+        if (autoBlocking && runnable.isInstanceOf[FiberRunnable]) {
+            val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+            val location      = fiberRunnable.location
+
+            if ((location ne null) && (location ne emptyTrace)) {
+                if (worker eq null) {
+                    globalLocations.put(location)
+                } else {
+                    worker.submittedLocations.put(location)
+                }
+
+                blockingLocations.contains(locations)
+            } else {
+                false
+            }
+        } else {
+            false
         }
     }
 }
