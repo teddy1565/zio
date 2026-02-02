@@ -25,8 +25,6 @@ import java.util.concurrent.{ConcurrentLinkedQueue, ThreadLocalRandom}
 import scala.collection.mutable
 import scala.concurrent.{BlockContext, CanAwait}
 
-import java.util.concurrent.ThreadLocalRandom
-
 /**
  * A `ZScheduler` is an `Executor` that is optimized for running ZIO
  * applications. Inspired by "Making the Tokio Scheduler 10X Faster" by Carl
@@ -150,34 +148,17 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
     if (isBlocking(worker, runnable)) {
       submitBlocking(runnable)
     } else {
-      var submitted = false
-      if ((worker ne null) && !worker.blocking) {
-        val random = ThreadLocalRandom.current()
-        val index = random.nextInt(poolSize)
-        val other = workers(index)
-        if ((other ne worker) && other.localQueue.size() < worker.localQueue.size()) {
-          if (other.localQueue.offer(runnable)) {
-            submitted = true
-          }
-        }
-
-        if (!submitted) {
-          if (!worker.localQueue.offer(runnable)) {
-            handleFullWorkerQueue(worker, runnable)
-          }
-          submitted = true
-        }
-
-      } else {
+      if ((worker eq null) || worker.blocking) {
         globalQueue.offer(runnable)
-        submitted = true
-      }
-
+      } else if (!worker.localQueue.offer(runnable)) {
+        handleFullWorkerQueue(worker, runnable)
+      } else ()
       val currentState = state.get
       maybeUnparkWorker(currentState)
       true
     }
   }
+  
 
   override def submitAndYield(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
     val worker = workerOrNull()
