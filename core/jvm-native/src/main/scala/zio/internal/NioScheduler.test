@@ -1,0 +1,242 @@
+package zio.internal
+
+import zio._
+import zio.stacktracer.TracingImplicits.disableAutoTrace
+
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
+import java.util.concurrent.locks.LockSupport
+import java.util.concurrent.{ConcurrentLinkedQueue, ThreadLocalRandom}
+import scala.collection.mutable
+import scala.concurrent.{BlockContext, CanAwait}
+
+private final class NioScheduler(autoBlocking: Boolean) extends Executor { parent =>
+    import Trace.{empty => emptyTrace}
+    import NioScheduler.{poolSize, workerOrNull}
+
+    private[this] val globalQueue       = new PartitionedLinkedQueue[Runnable](poolSize * 4);
+    private[this] val cache             = new ConcurrentLinkedQueue[NioScheduler.Worker]()
+    private[this] val idle              = new ConcurrentLinkedQueue[NioScheduler.Worker]()
+    private[this] val globalLocations   = makeLocations()
+    private[this] val state             = new AtomicInteger(poolSize << 16)
+    private[this] val workers           = Array.ofDim[NioScheduler.Worker](poolSize)
+
+    @volatile private[this] var blockingLocations: Set[Trace] = Set.empty
+
+    (0 until poolSize).foreach { workerId =>
+        val worker = makeWorker()
+        worker.setName(workerId)
+        worker.setDaemon(true)
+        workers(workerId) = worker
+    }
+
+    workers.foreach(_.start())
+
+    if (autoBlocking) {
+        val supervisor = makeSupervisor()
+        supervisor.setName("NioScheduler-Supervisor")
+        supervisor.setDaemon(true)
+        supervisor.start()
+    }
+
+    override private[zio] def isCurrentThreadInExecutor: Boolean = 
+        Thread.currentThread().isInstanceOf[NioScheduler.Worker]
+    
+    def metrics(implicit unsafe: Unsafe): Option[ExecutionMetrics] = {
+        val metrics = new ExecutionMetrics {
+            def capacity: Int = Int.MaxValue
+            def concurrency: Int = poolSize
+            def dequeuedCount: Long = {
+                var dequeued = 0L
+                var i        = 0
+                while (i != poolSize) {
+                    var worker = workers(i)
+                    dequeued += worker.opCount
+                    i += 1
+                }
+
+                dequeued
+            }
+
+            def enqueuedCount: Long = {
+                var enqueued = 0L
+                var i        = 0
+                while (i != poolSize) {
+                    val worker = workers(i)
+                    enqueued += worker.opCount
+                    enqueued += worker.localQueue.size()
+                    if (worker.nextRunnable ne null) enqueued += 1
+                    i += 1
+                }
+
+                enqueued += globalQueue.size()
+
+                enqueued
+            }
+
+            def size: Int = {
+                var i     = 0
+                var size  = 0
+                while (i != poolSize) {
+                    val worker = workers(i)
+                    size += worker.localQueue.size()
+
+                    if (worker.nextRunnable ne null) size += 1
+                    i += 1
+                }
+                
+                size += globalQueue.size()
+                size
+            }
+
+            def workersCount: Int = {
+                val currentState = state.get
+
+                (currentState & 0xffff0000) >> 16
+            }
+        }
+
+        Some(metrics)
+    }
+
+    override def stealWork(depth: Int): Boolean = {
+        val worker = workerOrNull()
+        if (worker ne null) {
+            var runnable = null.asInstanceOf[Runnable]
+            
+            if (worker.nextRunnable ne null) {
+                runnable = worker.nextRunnable
+                worker.nextRunnable = null
+            } else {
+                runnable = worker.localQueue.poll(null)
+                if (runnable eq null) {
+                    runnable = globalQueue.poll()
+                }
+            }
+
+            if (runnable ne null) {
+                if (runnable.isInstanceOf[FiberRunnable]) {
+                    val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+                    worker.currentRunnable = fiberRunnable
+                    fiberRunnable.run(depth)
+                } else {
+                    runnable.run()
+                }
+
+                true
+            } else {
+                worker.nextRunnable = runnable
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
+        val worker = workerOrNull()
+        if (isBlocking(worker, runnable)) {
+            submitBlocking(runnable)
+        } else {
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
+            } else if (!worker.localQueue.offer(runnable)) {
+                handleFullWorkerQueue(worker, runnable)
+            } else ()
+
+            val currentState = state.get
+            maybeUnparkWorker(currentState)
+            true
+        }
+    }
+
+    override def submitAndYield(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
+        val worker = workerOrNull()
+        if (isBlocking(worker, runnable)) {
+            submitBlocking(runnable)
+        } else {
+            var notify = true
+        }
+    }
+}
+
+private object NioScheduler {
+    private val poolSize = java.lang.Runtime.getRuntime.availableProcessors
+    
+    
+
+    def markCurrentWorkerAsBlocking(): Unit = {
+        val worker = workerOrNull()
+        if (worker ne null) {
+            worker.markAsBlocking()
+        } else {
+            ()
+        }
+    }
+
+    private def workerOrNull(): NioScheduler.Worker =
+        Thread.currentThread() match {
+            case w: NioScheduler.Worker => w
+            case _                      => null
+        }
+    
+    private sealed abstract class Locations {
+        def get(trace: Trace): Long
+
+        def put(trace: Trace): Long
+    }
+
+    private object Locations {
+        final class Enabled(sizeHint: Int = 64) extends Locations {
+            // maybe no use atomicLong? try C lang __attribute__((aligned(64))) padding cpu cache line
+            private[this] val locations = mutable.HashMap.empty[Trace, AtomicLong]
+            locations.sizeHint(sizeHint)
+
+            def get(trace: Trace): Long = {
+                val v = locations.getOrElse(trace, null)
+                if (v eq null) 0L else v.get()
+            }
+
+            def put(trace: Trace): Long =
+                locations.getOrElseUpdate(trace, new AtomicLong(0L)).getAndIncrement()
+        }
+
+        object Disabled extends Locations {
+            def get(trace: Trace): Long = 0L
+            def put(trace: Trace): Long = 0L
+        }
+    }
+
+    private sealed abstract class Supervisor extends Thread
+
+    private sealed abstract class Worker extends Thread with BlockContext {
+        val submittedLocations: Locations
+
+        @volatile
+        var active: Boolean = true
+
+        @volatile
+        var blocking: Boolean = false
+
+        @volatile
+        var currentRunnable: Runnable = null
+
+        var localQueue: RingBufferPow2[Runnable] = RingBufferPow2[Runnable](256)
+
+        var nextRunnable: Runnable = null
+
+        @volatile
+        var opCount: Long = 0L
+
+        def markAsBlocking(): Unit
+
+        final def setName(i: Int): Unit = 
+            setName(s"NioScheduler-Worker-$i")
+
+        override def blockOn[T](thunk: => T)(implicit permission: CanAwait): T = {
+            markAsBlocking()
+            thunk
+        }
+
+    }
+
+}
