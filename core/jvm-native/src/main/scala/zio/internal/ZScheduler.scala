@@ -156,7 +156,7 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
         val index = random.nextInt(poolSize)
         val other = workers(index)
         if ((other ne worker) && other.localQueue.size() < worker.localQueue.size()) {
-          if (ohter.localQueue.offer(runnable)) {
+          if (other.localQueue.offer(runnable)) {
             submitted = true
           }
         }
