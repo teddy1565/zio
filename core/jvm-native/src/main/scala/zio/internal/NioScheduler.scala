@@ -106,13 +106,13 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                 while (!isInterrupted) {
                     currentBlocking = blocking
                     val currentNextRunnable = nextRunnable
-                    if (currentBlocking) {
-                        workerTracker.touch(self)
-                    } else if (currentNextRunnable ne null) {
+                    if (currentBlocking) ()
+                    else if (currentNextRunnable ne null) {
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
                         if ((currentOpCount & 63) == 0) {
+                            workerTracker.touch(self)
                             runnable = globalQueue.poll(random)
                             if (runnable eq null) {
                                 runnable = localQueue.poll(null)
@@ -432,8 +432,6 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                     worker.localQueue.offer(runnable)
                 }
 
-                parent.workersActiveTracker.touch(worker)
-
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             }
@@ -592,16 +590,19 @@ private object NioScheduler {
             
             if (dummyHead.next == dummyTail) null
             else {
-                var idleWorker = dummyHead.next.worker
-                var i          = 0
-                while (((idleWorker.blocking == true) && (i < poolSize)) || ((idleWorker.active == false) && (i < poolSize))) {
-                    touch(idleWorker)
-                    idleWorker = dummyHead.next.worker
+                var curr = dummyHead.next
+                var i = 0
+                while ((curr ne dummyTail) && (i < poolSize)) {
+                    val w = curr.worker
+                    
+                    if ((w != null) && (!w.blocking) && (w.active)) {
+                        return w
+                    }
+                    curr = curr.next
                     i += 1
                 }
 
-                if (((i == poolSize) && (idleWorker.active == false)) || ((i == poolSize) && (idleWorker.blocking == true))) null
-                else idleWorker
+                null
             }
         }
 
