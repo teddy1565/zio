@@ -432,6 +432,8 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     worker.localQueue.offer(runnable)
                 }
 
+                parent.workersActiveTracker.touch(worker)
+
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             }

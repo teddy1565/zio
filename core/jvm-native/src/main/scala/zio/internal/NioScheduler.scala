@@ -432,6 +432,8 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                     worker.localQueue.offer(runnable)
                 }
 
+                parent.workersActiveTracker.touch(worker)
+
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             }
@@ -594,7 +596,6 @@ private object NioScheduler {
                 var i = 0
                 while ((curr ne dummyTail) && (i < poolSize)) {
                     val w = curr.worker
-                    
                     if ((w != null) && (!w.blocking) && (w.active)) {
                         return w
                     }
