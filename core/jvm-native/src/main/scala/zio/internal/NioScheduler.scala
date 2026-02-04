@@ -594,13 +594,13 @@ private object NioScheduler {
             else {
                 var idleWorker = dummyHead.next.worker
                 var i          = 0
-                while (idleWorker.blocking == true && i < poolSize || idleWorker.active == false && i < poolSize) {
+                while (((idleWorker.blocking == true) && (i < poolSize)) || ((idleWorker.active == false) && (i < poolSize))) {
                     touch(idleWorker)
                     idleWorker = dummyHead.next.worker
                     i += 1
                 }
 
-                if (i == poolSize && idleWorker.active == false || i == poolSize && idleWorker.blocking == true) null
+                if (((i == poolSize) && (idleWorker.active == false)) || ((i == poolSize) && (idleWorker.blocking == true))) null
                 else idleWorker
             }
         }
