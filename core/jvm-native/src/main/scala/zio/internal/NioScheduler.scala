@@ -398,9 +398,6 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            if ((worker eq null) || worker.blocking) {
-                globalQueue.offer(runnable)
-            }
             val idleWorker = workersActiveTracker.getIdleWorker()
 
             if ((idleWorker eq null) || idleWorker.blocking) {

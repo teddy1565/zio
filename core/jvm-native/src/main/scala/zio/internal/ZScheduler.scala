@@ -398,9 +398,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            if ((worker eq null) || worker.blocking) {
-                globalQueue.offer(runnable)
-            }
             val idleWorker = workersActiveTracker.getIdleWorker()
 
             if ((idleWorker eq null) || idleWorker.blocking) {
