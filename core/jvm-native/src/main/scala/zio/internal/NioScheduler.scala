@@ -111,6 +111,10 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
+                        if ((localQueue.size() > 64) || ((currentOpCount & 1023) == 0)) {
+                            workerTracker.touch(self)
+                        }
+                        
                         if ((currentOpCount & 63) == 0) {
                             workerTracker.touch(self)
                             runnable = globalQueue.poll(random)
@@ -398,21 +402,12 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            if ((worker eq null) || worker.blocking || worker.localQueue.size() > 192) {
-                val idleWorker = workersActiveTracker.getIdleWorker()
-                if ((idleWorker eq null) || idleWorker.blocking) {
-                    globalQueue.offer(runnable)
-                } else if (!idleWorker.localQueue.offer(runnable)) {
-                    handleFullWorkerQueue(idleWorker, runnable)
-                } else ()
-
-                if (idleWorker ne null) workersActiveTracker.touch(idleWorker)
-                if (worker ne null) workersActiveTracker.touch(worker)
-                
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             } else ()
-
+            
             val currentState = state.get
             maybeUnparkWorker(currentState)
             true
@@ -595,7 +590,7 @@ private object NioScheduler {
             }
         }
 
-        def getIdleWorker(): NioScheduler.Worker = synchronized {
+        def getIdleWorkerOld(): NioScheduler.Worker = synchronized {
             
             if (dummyHead.next == dummyTail) null
             else {
@@ -610,6 +605,18 @@ private object NioScheduler {
                 if (((i == poolSize) && (idleWorker.active == false)) || ((i == poolSize) && (idleWorker.blocking == true))) null
                 else idleWorker
             }
+        }
+
+        def getIdleWorker(): NioScheduler.Worker = {
+            var curr = dummyHead.next
+            var i = 0
+            while ((curr ne dummyTail) && (i < poolSize)) {
+                val w = curr.worker
+                if (w != null && !w.blocking && w.active) return w
+                curr = curr.next
+                i += 1
+            }
+            null
         }
 
         def getBusyWorker(workerSelf: NioScheduler.Worker): NioScheduler.Worker = synchronized {

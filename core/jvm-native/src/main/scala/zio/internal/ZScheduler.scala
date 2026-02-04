@@ -111,8 +111,12 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
-                        if ((currentOpCount & 63) == 0) {
+
+                        if ((localQueue.size() > 64) || ((currentOpCount & 1023) == 0)) {
                             workerTracker.touch(self)
+                        }
+
+                        if ((currentOpCount & 63) == 0) {
                             runnable = globalQueue.poll(random)
                             if (runnable eq null) {
                                 runnable = localQueue.poll(null)
@@ -399,22 +403,12 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
             submitBlocking(runnable)
         } else {
 
-            if ((worker eq null) || worker.blocking || worker.localQueue.size() > 192) {
-                val idleWorker = workersActiveTracker.getIdleWorker()
-                if ((idleWorker eq null) || idleWorker.blocking) {
-                    globalQueue.offer(runnable)
-                } else if (!idleWorker.localQueue.offer(runnable)) {
-                    handleFullWorkerQueue(idleWorker, runnable)
-                } else ()
-
-                
-                if (idleWorker ne null) workersActiveTracker.touch(idleWorker)
-                if (worker ne null) workersActiveTracker.touch(worker)
-                
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             } else ()
-
+            
             val currentState = state.get
             maybeUnparkWorker(currentState)
             true
@@ -597,7 +591,7 @@ private object ZScheduler {
             }
         }
 
-        def getIdleWorker(): ZScheduler.Worker = synchronized {
+        def getIdleWorkerOld(): ZScheduler.Worker = synchronized {
             
             if (dummyHead.next == dummyTail) null
             else {
@@ -633,6 +627,18 @@ private object ZScheduler {
                 
                 busyWorker
             }
+        }
+
+        def getIdleWorker(): ZScheduler.Worker = {
+            var curr = dummyHead.next
+            var i = 0
+            while ((curr ne dummyTail) && (i < poolSize)) {
+                val w = curr.worker
+                if (w != null && !w.blocking && w.active) return w
+                curr = curr.next
+                i += 1
+            }
+            null
         }
 
         def replaceWorker(workerA: ZScheduler.Worker, workerB: ZScheduler.Worker): Unit = synchronized {
