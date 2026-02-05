@@ -111,12 +111,11 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
-                        if ((localQueue.size() > 64) || ((currentOpCount & 1023) == 0)) {
+                        if ((localQueue.size() > 128) || ((currentOpCount & 1023) == 0)) {
                             workerTracker.touch(self)
                         }
-                        
+
                         if ((currentOpCount & 63) == 0) {
-                            workerTracker.touch(self)
                             runnable = globalQueue.poll(random)
                             if (runnable eq null) {
                                 runnable = localQueue.poll(null)
@@ -319,6 +318,27 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                                 currentWorker.markAsBlocking()
 
                             } else {
+                                val currentWorkerQueueSize = currentWorker.localQueue.size()
+                                if (currentWorkerQueueSize > 224) {
+                                    val idleWorker = workersActiveTracker.getIdleWorker()
+                                    if ((idleWorker ne null) && (idleWorker ne currentWorker) && (idleWorker.localQueue.size() < 93)) {
+                                        val runnables = currentWorker.localQueue.pollUpTo(64)
+                                        val nRunnables = runnables.size
+                                        if (nRunnables > 0) {
+                                            val iter = runnables.iterator
+
+                                            if ((idleWorker.blocking == false) && (idleWorker.active == true) && (idleWorker.localQueue.size() < 93)) {
+                                                idleWorker.localQueue.offerAll(iter, nRunnables)
+                                            } else {
+                                                globalQueue.offerAll(runnables)
+                                            }
+                                            
+                                            if (nRunnables > 31) {
+                                                workersActiveTracker.touch(idleWorker)
+                                            }
+                                        }
+                                    }
+                                }
                                 previousOpCounts(workerId) = currentOpCount
                             }
                         } else {
@@ -457,9 +477,9 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         val accepted = worker.localQueue.offer(runnable)
         if (!accepted) {
             globalQueue.offer(runnable, rnd)
+            parent.workersActiveTracker.touch(worker)
         }
-
-        parent.workersActiveTracker.touch(worker)
+        
     }
 }
 
@@ -590,7 +610,7 @@ private object NioScheduler {
             }
         }
 
-        def getIdleWorkerOld(): NioScheduler.Worker = synchronized {
+        def getIdleWorker(): NioScheduler.Worker = synchronized {
             
             if (dummyHead.next == dummyTail) null
             else {
@@ -607,13 +627,37 @@ private object NioScheduler {
             }
         }
 
-        def getIdleWorker(): NioScheduler.Worker = {
+        def getIdleWorkerOld(): NioScheduler.Worker = {
             var curr = dummyHead.next
             var i = 0
             while ((curr ne dummyTail) && (i < poolSize)) {
                 val w = curr.worker
                 if (w != null && !w.blocking && w.active) return w
                 curr = curr.next
+                i += 1
+            }
+            null
+        }
+
+        def getIdleWorkerOldOld(): NioScheduler.Worker = {
+            val skip = ThreadLocalRandom.current().nextInt(poolSize)
+            var curr = dummyHead.next
+            var s = 0
+            while ((s < skip) && (curr ne dummyTail)) {
+                curr = curr.next
+                s += 1
+            }
+
+            if (curr eq dummyTail) {
+                curr = dummyHead.next
+            }
+
+            var i = 0
+            while (i < poolSize) {
+                val w = curr.worker
+                if ((w != null) && (!w.blocking) && (w.active)) return w
+                curr = curr.next
+                if (curr eq dummyTail) curr = dummyHead.next
                 i += 1
             }
             null
