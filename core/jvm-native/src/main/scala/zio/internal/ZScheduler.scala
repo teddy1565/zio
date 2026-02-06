@@ -102,6 +102,8 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                 val random          = ThreadLocalRandom.current
                 var runnable        = null.asInstanceOf[Runnable]
                 var searching       = false
+
+                var currentHardLoadingOpCount = 0L
                 
                 while (!isInterrupted) {
                     currentBlocking = blocking
@@ -111,8 +113,9 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
-                        if ((localQueue.size() > 128) || ((currentOpCount & 1023) == 0)) {
+                        if (currentHardLoadingOpCount > 2047) {
                             workerTracker.touch(self)
+                            currentHardLoadingOpCount = 0L
                         }
 
                         if ((currentOpCount & 63) == 0) {
@@ -226,6 +229,14 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         currentRunnable = runnable
                         currentOpCount += 1
                         opCount = currentOpCount
+
+                        if (localQueue.size() > 192) {
+                            currentHardLoadingOpCount += 1
+                            hardLoadingOpCount = currentHardLoadingOpCount
+                        } else {
+                            currentHardLoadingOpCount = 0L
+                            hardLoadingOpCount = currentHardLoadingOpCount
+                        }
                     }
                     
                 }
@@ -453,9 +464,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     worker.nextRunnable = fromGlobal
                     worker.localQueue.offer(runnable)
                 }
-
-                parent.workersActiveTracker.touch(worker)
-
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
             }
@@ -477,7 +485,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
         val accepted = worker.localQueue.offer(runnable)
         if (!accepted) {
             globalQueue.offer(runnable, rnd)
-            parent.workersActiveTracker.touch(worker)
         }
         
     }
@@ -546,6 +553,9 @@ private object ZScheduler {
 
         @volatile
         var opCount: Long = 0L
+
+        @volatile
+        var hardLoadingOpCount: Long = 0L
 
         def markAsBlocking(): Unit
 
