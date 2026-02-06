@@ -142,8 +142,8 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                             }
 
                             if (searching) {
-                                val targetWorker = workerTracker.getBusyWorker(self)
-                                if (targetWorker ne null) {
+                                val targetWorker = workerTracker.getBusyWorker()
+                                if ((targetWorker ne null) && (targetWorker ne self)) {
                                     val size = targetWorker.localQueue.size()
                                     if (size > 0) {
                                         val runnables = targetWorker.localQueue.pollUpTo(size - size / 2)
@@ -165,8 +165,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                                                     globalQueue.offerAll(runnables, random)
                                                 }
                                             }
-
-                                            workerTracker.touch(self)
                                         }
                                     }
                                 }
@@ -330,23 +328,20 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
 
                             } else {
                                 val currentWorkerQueueSize = currentWorker.localQueue.size()
-                                if (currentWorkerQueueSize > 224) {
-                                    val idleWorker = workersActiveTracker.getIdleWorker()
-                                    if ((idleWorker ne null) && (idleWorker ne currentWorker) && (idleWorker.localQueue.size() < 93)) {
-                                        val runnables = currentWorker.localQueue.pollUpTo(64)
+                                if (currentWorkerQueueSize < 32) {
+                                    val busyWorker = workersActiveTracker.getBusyWorker()
+                                    if ((busyWorker ne null) && (busyWorker ne currentWorker) && (busyWorker.localQueue.size() > 224)) {
+                                        val runnables = currentWorker.localQueue.pollUpTo(96)
                                         val nRunnables = runnables.size
                                         if (nRunnables > 0) {
                                             val iter = runnables.iterator
 
-                                            if ((idleWorker.blocking == false) && (idleWorker.active == true) && (idleWorker.localQueue.size() < 93)) {
-                                                idleWorker.localQueue.offerAll(iter, nRunnables)
+                                            if ((currentWorker.blocking == false) && (currentWorker.active == true) && (currentWorker.localQueue.size() < 48)) {
+                                                currentWorker.localQueue.offerAll(iter, nRunnables)
                                             } else {
                                                 globalQueue.offerAll(runnables)
                                             }
                                             
-                                            if (nRunnables > 31) {
-                                                workersActiveTracker.touch(idleWorker)
-                                            }
                                         }
                                     }
                                 }
@@ -590,7 +585,7 @@ private object ZScheduler {
                 node = new Node(worker)
                 nodeMap.put(worker, node)
             }
-            addToTail(node)
+            addToHead(node)
 
             if (nodeMap.size() > maxSize) {
                 val oldest = dummyHead.next
@@ -609,7 +604,7 @@ private object ZScheduler {
                 node = new Node(worker)
                 nodeMap.put(worker, node)
             }
-            addToHead(node)
+            addToTail(node)
 
             if (nodeMap.size() > maxSize) {
                 val oldest = dummyHead.next
@@ -620,73 +615,18 @@ private object ZScheduler {
             }
         }
 
-        def getIdleWorker(): ZScheduler.Worker = synchronized {
-            
-            if (dummyHead.next == dummyTail) null
-            else {
-                var idleWorker = dummyHead.next.worker
-                var i          = 0
-                while (((idleWorker.blocking == true) && (i < poolSize)) || ((idleWorker.active == false) && (i < poolSize))) {
-                    touch(idleWorker)
-                    idleWorker = dummyHead.next.worker
-                    i += 1
-                }
-
-                if (((i == poolSize) && (idleWorker.active == false)) || ((i == poolSize) && (idleWorker.blocking == true))) null
-                else idleWorker
-            }
-        }
-
-        def getIdleWorkerOld(): ZScheduler.Worker = {
-            var curr = dummyHead.next
-            var i = 0
-            while ((curr ne dummyTail) && (i < poolSize)) {
-                val w = curr.worker
-                if (w != null && !w.blocking && w.active) return w
-                curr = curr.next
-                i += 1
-            }
-            null
-        }
-
-        def getIdleWorkerOldOld(): ZScheduler.Worker = {
-            val skip = ThreadLocalRandom.current().nextInt(poolSize)
-            var curr = dummyHead.next
-            var s = 0
-            while ((s < skip) && (curr ne dummyTail)) {
-                curr = curr.next
-                s += 1
-            }
-
-            if (curr eq dummyTail) {
-                curr = dummyHead.next
-            }
-
-            var i = 0
-            while (i < poolSize) {
-                val w = curr.worker
-                if ((w != null) && (!w.blocking) && (w.active)) return w
-                curr = curr.next
-                if (curr eq dummyTail) curr = dummyHead.next
-                i += 1
-            }
-            null
-        }
-
         def getBusyWorker(workerSelf: ZScheduler.Worker): ZScheduler.Worker = synchronized {
             if (dummyHead.next == dummyTail) null
             else {
-                var busyWorker: ZScheduler.Worker = null
-                var p          = dummyTail.prev
+                var busyWorker: ZScheduler.Worker = dummyHead.next.worker
+                var p          = dummyHead.next
                 var i          = 0
-                while ((i < poolSize) && (p ne null) && (p ne dummyHead)) {
-                    if ((p.worker.blocking == false) && (p.worker.active == true) && (p.worker ne workerSelf)) {
-                        busyWorker = p.worker
-                        i = poolSize
-                    }
-                    
+                while ((i < poolSize) && (p ne null) && (p ne dummyTail) && ((p.worker.blocking == true) || (p.worker.active == false))) {
                     i += 1
-                    p = p.prev
+                    p = p.next
+                    if ((p ne null) && (p ne dummyTail)) {
+                        busyWorker = p.worker
+                    }
                 }
                 
                 busyWorker
