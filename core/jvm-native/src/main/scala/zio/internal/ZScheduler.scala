@@ -615,7 +615,7 @@ private object ZScheduler {
             }
         }
 
-        def getBusyWorker(workerSelf: ZScheduler.Worker): ZScheduler.Worker = synchronized {
+        def getBusyWorker(): ZScheduler.Worker = synchronized {
             if (dummyHead.next == dummyTail) null
             else {
                 var busyWorker: ZScheduler.Worker = dummyHead.next.worker

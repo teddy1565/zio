@@ -615,7 +615,7 @@ private object NioScheduler {
             }
         }
 
-        def getBusyWorker(workerSelf: NioScheduler.Worker): NioScheduler.Worker = synchronized {
+        def getBusyWorker(): NioScheduler.Worker = synchronized {
             if (dummyHead.next == dummyTail) null
             else {
                 var busyWorker: NioScheduler.Worker = dummyHead.next.worker
