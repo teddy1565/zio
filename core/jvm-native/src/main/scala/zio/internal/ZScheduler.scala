@@ -115,7 +115,7 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     } else {
                         if (currentHardLoadingOpCount > 127) {
                             workerTracker.touch(self)
-                            currentHardLoadingOpCount = 0L
+                            currentHardLoadingOpCount = currentHardLoadingOpCount / 2
                         }
 
                         if ((currentOpCount & 63) == 0) {

@@ -115,7 +115,7 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                     } else {
                         if (currentHardLoadingOpCount > 127) {
                             workerTracker.touch(self)
-                            currentHardLoadingOpCount = 0L
+                            currentHardLoadingOpCount = currentHardLoadingOpCount / 2
                         }
 
                         if ((currentOpCount & 63) == 0) {
