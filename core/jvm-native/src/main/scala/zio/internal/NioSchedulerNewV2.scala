@@ -113,7 +113,7 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
-                        if (currentHardLoadingOpCount > 2047) {
+                        if (currentHardLoadingOpCount > 127) {
                             workerTracker.touch(self)
                             currentHardLoadingOpCount = 0L
                         }
@@ -147,6 +147,7 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                                     val size = targetWorker.localQueue.size()
                                     if (size > 0) {
                                         val runnables = targetWorker.localQueue.pollUpTo(size - size / 2)
+                                        workerTracker.scale(targetWorker)
                                         val nRunnables = runnables.size
                                         if (nRunnables > 0) {
                                             val iter = runnables.iterator
@@ -614,7 +615,7 @@ private object NioScheduler {
             }
         }
 
-        def getBusyWorker(): NioScheduler.Worker = synchronized {
+        def getBusyWorker(): NioScheduler.Worker = {
             if (dummyHead.next == dummyTail) null
             else {
                 var busyWorker: NioScheduler.Worker = dummyHead.next.worker
@@ -628,10 +629,6 @@ private object NioScheduler {
                     }
                 }
 
-                if (busyWorker ne null) {
-                    scale(busyWorker)
-                }
-                
                 busyWorker
             }
         }
