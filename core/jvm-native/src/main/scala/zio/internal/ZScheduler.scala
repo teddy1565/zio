@@ -227,13 +227,18 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         currentOpCount += 1
                         opCount = currentOpCount
 
-                        if (localQueue.size() > 192) {
+                        val currentLocalQueueSize = localQueue.size()
+                        if (currentLocalQueueSize > 224) {
+                            currentHardLoadingOpCount += 3
+                        } else if (currentLocalQueueSize > 192) {
+                            currentHardLoadingOpCount += 2
+                        } else if (currentLocalQueueSize > 128) {
                             currentHardLoadingOpCount += 1
-                            hardLoadingOpCount = currentHardLoadingOpCount
                         } else {
                             currentHardLoadingOpCount = 0L
-                            hardLoadingOpCount = currentHardLoadingOpCount
                         }
+
+                        hardLoadingOpCount = currentHardLoadingOpCount
                     }
                     
                 }
