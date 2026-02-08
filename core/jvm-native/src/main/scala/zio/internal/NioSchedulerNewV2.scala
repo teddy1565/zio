@@ -147,7 +147,6 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                                     val size = targetWorker.localQueue.size()
                                     if (size > 0) {
                                         val runnables = targetWorker.localQueue.pollUpTo(size - size / 2)
-                                        workerTracker.scale(targetWorker)
                                         val nRunnables = runnables.size
                                         if (nRunnables > 0) {
                                             val iter = runnables.iterator
@@ -627,6 +626,10 @@ private object NioScheduler {
                     if ((p ne null) && (p ne dummyTail)) {
                         busyWorker = p.worker
                     }
+                }
+
+                if (busyWorker ne null) {
+                    scale(busyWorker)
                 }
                 
                 busyWorker
