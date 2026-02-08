@@ -147,7 +147,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                                     val size = targetWorker.localQueue.size()
                                     if (size > 0) {
                                         val runnables = targetWorker.localQueue.pollUpTo(size - size / 2)
-                                        workerTracker.scale(targetWorker)
                                         val nRunnables = runnables.size
                                         if (nRunnables > 0) {
                                             val iter = runnables.iterator
@@ -332,7 +331,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                                     val busyWorker = workersActiveTracker.getBusyWorker()
                                     if ((busyWorker ne null) && (busyWorker ne currentWorker) && (busyWorker.localQueue.size() > 224)) {
                                         val runnables = busyWorker.localQueue.pollUpTo(96)
-                                        workersActiveTracker.scale(busyWorker)
                                         val nRunnables = runnables.size
                                         if (nRunnables > 0) {
                                             val iter = runnables.iterator
@@ -616,7 +614,7 @@ private object ZScheduler {
             }
         }
 
-        def getBusyWorker(): ZScheduler.Worker = {
+        def getBusyWorker(): ZScheduler.Worker = synchronized {
             if (dummyHead.next == dummyTail) null
             else {
                 var busyWorker: ZScheduler.Worker = dummyHead.next.worker
@@ -628,6 +626,10 @@ private object ZScheduler {
                     if ((p ne null) && (p ne dummyTail)) {
                         busyWorker = p.worker
                     }
+                }
+
+                if (busyWorker ne null) {
+                    scale(busyWorker)
                 }
 
                 busyWorker
