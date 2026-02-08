@@ -113,7 +113,7 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         runnable = currentNextRunnable
                         nextRunnable = null
                     } else {
-                        if (currentHardLoadingOpCount > 127) {
+                        if (currentHardLoadingOpCount > 1023) {
                             workerTracker.touch(self)
                             currentHardLoadingOpCount = currentHardLoadingOpCount / 2
                         }
@@ -235,9 +235,9 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         } else if (currentLocalQueueSize > 128) {
                             currentHardLoadingOpCount += 1
                         } else if (currentLocalQueueSize < 129) {
-                            currentHardLoadingOpCount = currentHardLoadingOpCount / 2
-                        } else if (currentLocalQueueSize < 96) {
-                            currentHardLoadingOpCount = currentHardLoadingOpCount / 3
+                            currentHardLoadingOpCount -= 1
+                        } else if (currentLocalQueueSize < 64) {
+                            currentHardLoadingOpCount -= 2
                         } else {
                             currentHardLoadingOpCount = 0L
                         }
