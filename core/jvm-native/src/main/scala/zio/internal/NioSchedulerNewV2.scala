@@ -234,9 +234,9 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                             currentHardLoadingOpCount += 2
                         } else if (currentLocalQueueSize > 128) {
                             currentHardLoadingOpCount += 1
-                        } else if (currentLocalQueueSize < 96) {
+                        } else if (currentLocalQueueSize < 129) {
                             currentHardLoadingOpCount = currentHardLoadingOpCount / 2
-                        } else if (currentLocalQueueSize < 64) {
+                        } else if (currentLocalQueueSize < 96) {
                             currentHardLoadingOpCount = currentHardLoadingOpCount / 3
                         } else {
                             currentHardLoadingOpCount = 0L
