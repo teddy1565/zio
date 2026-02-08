@@ -326,24 +326,24 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                                 currentWorker.markAsBlocking()
 
                             } else {
-                                val currentWorkerQueueSize = currentWorker.localQueue.size()
-                                if (currentWorkerQueueSize < 32) {
-                                    val busyWorker = workersActiveTracker.getBusyWorker()
-                                    if ((busyWorker ne null) && (busyWorker ne currentWorker) && (busyWorker.localQueue.size() > 224)) {
-                                        val runnables = currentWorker.localQueue.pollUpTo(96)
-                                        val nRunnables = runnables.size
-                                        if (nRunnables > 0) {
-                                            val iter = runnables.iterator
+                                // val currentWorkerQueueSize = currentWorker.localQueue.size()
+                                // if (currentWorkerQueueSize < 32) {
+                                //     val busyWorker = workersActiveTracker.getBusyWorker()
+                                //     if ((busyWorker ne null) && (busyWorker ne currentWorker) && (busyWorker.localQueue.size() > 224)) {
+                                //         val runnables = currentWorker.localQueue.pollUpTo(96)
+                                //         val nRunnables = runnables.size
+                                //         if (nRunnables > 0) {
+                                //             val iter = runnables.iterator
 
-                                            if ((currentWorker.blocking == false) && (currentWorker.active == true) && (currentWorker.localQueue.size() < 48)) {
-                                                currentWorker.localQueue.offerAll(iter, nRunnables)
-                                            } else {
-                                                globalQueue.offerAll(runnables)
-                                            }
+                                //             if ((currentWorker.blocking == false) && (currentWorker.active == true) && (currentWorker.localQueue.size() < 48)) {
+                                //                 currentWorker.localQueue.offerAll(iter, nRunnables)
+                                //             } else {
+                                //                 globalQueue.offerAll(runnables)
+                                //             }
                                             
-                                        }
-                                    }
-                                }
+                                //         }
+                                //     }
+                                // }
                                 previousOpCounts(workerId) = currentOpCount
                             }
                         } else {
