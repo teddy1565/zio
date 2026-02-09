@@ -413,6 +413,38 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
 
     }
 
+    override def stealWork(depth: Int): Boolean = {
+        val worker = workerOrNull()
+        if (worker ne null) {
+            var runnable = null.asInstanceOf[Runnable]
+            if (worker.nextRunnable ne null) {
+                runnable = worker.nextRunnable
+                worker.nextRunnable = null
+            } else {
+                runnable = worker.localQueue.poll(null)
+                if (runnable eq null) {
+                    runnable = globalQueue.poll()
+                }
+            }
+
+            if (runnable ne null) {
+                if (runnable.isInstanceOf[FiberRunnable]) {
+                    val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+                    worker.currentRunnable = fiberRunnable
+                    fiberRunnable.run(depth)
+                } else {
+                    runnable.run()
+                }
+                true
+            } else {
+                worker.nextRunnable = runnable
+                false
+            }
+        } else {
+            false
+        }
+    }
+
     def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
         val worker = workerOrNull()
         if (isBlocking(worker, runnable)) {

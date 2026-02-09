@@ -335,24 +335,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                                 currentWorker.markAsBlocking()
 
                             } else {
-                                val currentWorkerQueueSize = currentWorker.localQueue.size()
-                                if (currentWorkerQueueSize < 32) {
-                                    val busyWorker = workersActiveTracker.getBusyWorker()
-                                    if ((busyWorker ne null) && (busyWorker ne currentWorker) && (busyWorker.localQueue.size() > 224) && (busyWorker.hardLoadingOpCount > 1023)) {
-                                        val runnables = busyWorker.localQueue.pollUpTo(96)
-                                        val nRunnables = runnables.size
-                                        if (nRunnables > 0) {
-                                            val iter = runnables.iterator
-
-                                            if ((currentWorker.blocking == false) && (currentWorker.active == true) && (currentWorker.localQueue.size() < 48)) {
-                                                currentWorker.localQueue.offerAll(iter, nRunnables)
-                                            } else {
-                                                globalQueue.offerAll(runnables)
-                                            }
-                                            
-                                        }
-                                    }
-                                }
                                 previousOpCounts(workerId) = currentOpCount
                             }
                         } else {
@@ -429,6 +411,38 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
 
         Some(metrics)
 
+    }
+
+    override def stealWork(depth: Int): Boolean = {
+        val worker = workerOrNull()
+        if (worker ne null) {
+            var runnable = null.asInstanceOf[Runnable]
+            if (worker.nextRunnable ne null) {
+                runnable = worker.nextRunnable
+                worker.nextRunnable = null
+            } else {
+                runnable = worker.localQueue.poll(null)
+                if (runnable eq null) {
+                    runnable = globalQueue.poll()
+                }
+            }
+
+            if (runnable ne null) {
+                if (runnable.isInstanceOf[FiberRunnable]) {
+                    val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+                    worker.currentRunnable = fiberRunnable
+                    fiberRunnable.run(depth)
+                } else {
+                    runnable.run()
+                }
+                true
+            } else {
+                worker.nextRunnable = runnable
+                false
+            }
+        } else {
+            false
+        }
     }
 
     def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
@@ -584,6 +598,38 @@ private object ZScheduler {
         
         dummyHead.next = dummyTail
         dummyTail.prev = dummyHead
+
+        private val workerIdList = new Array[Int](maxSize)
+        private val workerIdMapKey = new java.util.concurrent.ConcurrentHashMap[Int, ZScheduler.Worker]()
+        private val workerIdMapVal = new java.util.concurrent.ConcurrentHashMap[ZScheduler.Worker, Int]()
+
+        (0 until maxSize).foreach { workerId =>
+            workerIdList(maxSize) = workerId
+        }
+        
+        def addWorkerToIdList(worker: ZScheduler.Worker, id: Int): Unit = synchronized {
+            workerIdMapKey.put(id, worker)
+            workerIdMapVal.put(worker, id)
+        }
+
+        def replaceWorkerIdList(oldWorker: ZScheduler.Worker, newWorker: ZScheduler.Worker): Unit = synchronized {
+            val id = workerIdMapVal.get(oldWorker)
+            workerIdMapKey.remove(id)
+            workerIdMapVal.remove(oldWorker)
+            workerIdMapKey.put(id, newWorker)
+            workerIdMapVal.put(newWorker, id)
+        }
+
+        def reflashWorkerList(): Unit = {
+            var startIndex = 0
+            var endIndex   = maxSize - 1
+            while (startIndex < endIndex) {
+                
+
+                startIndex += 1
+                endIndex -= 1
+            }
+        }
 
         def touch(worker: ZScheduler.Worker): Unit = synchronized {
             var node = nodeMap.get(worker)
