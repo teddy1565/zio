@@ -134,18 +134,20 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            var nofity: Boolean = true
+            var notify: Boolean = true
             val rnd = ThreadLocalRandom.current
             if ((worker eq null) || worker.blocking) {
                 globalQueue.offer(runnable)
             } else if ((worker.nextRunnable eq null) && worker.localQueue.isEmpty()) {
                 val fromGlobal = globalQueue.pollUpTo(128, rnd)
-                if ((fromGlobal eq null) || (fromGlobal.size() == 0)) {
+                if ((fromGlobal eq null) || (fromGlobal.size == 0)) {
                     worker.nextRunnable = runnable
                     notify = false
                 } else {
                     worker.nextRunnable = runnable
-                    worker.localQueue.offerAll(fromGlobal)
+                    val iter = fromGlobal.iterator
+
+                    worker.localQueue.offerAll(iter, fromGlobal.size)
                 }
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
@@ -194,8 +196,9 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                 }
                 val rnd = ThreadLocalRandom.current
                 val runnables = globalQueue.pollUpTo(128, rnd)
-                if (runnables ne null) {
-                    worker.localQueue.offerAll(runnables)
+                if ((runnables ne null) && (runnables.size > 0)) {
+                    val iter = runnables.iterator
+                    worker.localQueue.offerAll(iter, runnables.size)
                 }
             } else {
                 worker.nextRunnable = runnable
@@ -412,8 +415,9 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
 
                         if (localQueue.size() > 128) {
                             val runnables = globalQueue.pollUpTo(64, random)
-                            if (runnables ne null) {
-                                localQueue.offerAll(runnables)
+                            if ((runnables ne null) && (runnables.size > 0)) {
+                                val iter = runnables.iterator
+                                localQueue.offerAll(iter, runnables.size)
                             }
                         }
                     }
