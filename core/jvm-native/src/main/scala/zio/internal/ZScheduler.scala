@@ -417,38 +417,37 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     }
                 }
             }
-        }
-    
-    final def markAsBlocking(): Unit = synchronized {
-        if (blocking) ()
-        else {
-            blocking = true
-            val idx = workers.indexOf(self)
-            if (idx >= 0) {
-                val runnables = self.localQueue.pollUpTo(256)
-                if (nextRunnable ne null) {
-                    globalQueue.offer(nextRunnable)
-                    nextRunnable = null
-                }
-                globalQueue.offerAll(runnables)
-                val worker = cache.poll()
-                if (worker eq null) {
-                    val worker = markWorker()
-                    worker.setName(idx)
-                    worker.setDaemon(true)
-                    workers(idx) = worker
-                    worker.start()
-                } else {
-                    state.getAndIncrement()
-                    worker.setName(idx)
-                    workers(idx) = worker
-                    worker.blocking = false
-                    worker.active = true
-                    LockSupport.unpark(worker)
+            final def markAsBlocking(): Unit = synchronized {
+                if (blocking) ()
+                else {
+                    blocking = true
+                    val idx = workers.indexOf(self)
+                    if (idx >= 0) {
+                        val runnables = self.localQueue.pollUpTo(256)
+                        if (nextRunnable ne null) {
+                            globalQueue.offer(nextRunnable)
+                            nextRunnable = null
+                        }
+                        globalQueue.offerAll(runnables)
+                        val worker = cache.poll()
+                        if (worker eq null) {
+                            val worker = makeWorker()
+                            worker.setName(idx)
+                            worker.setDaemon(true)
+                            workers(idx) = worker
+                            worker.start()
+                        } else {
+                            state.getAndIncrement()
+                            worker.setName(idx)
+                            workers(idx) = worker
+                            worker.blocking = false
+                            worker.active = true
+                            LockSupport.unpark(worker)
+                        }
+                    }
                 }
             }
         }
-    }
 
     private def maybeUnparkWorker(currentState: Int): Unit = {
         val currentSearching = currentState & 0xffff
