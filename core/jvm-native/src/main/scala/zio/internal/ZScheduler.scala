@@ -117,7 +117,7 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            if ((worker eq null) || worker.blocking) {
+            if ((worker eq null) || (worker.blocking)) {
                 globalQueue.offer(runnable)
             } else if (!worker.localQueue.offer(runnable)) {
                 handleFullWorkerQueue(worker, runnable)
@@ -134,13 +134,13 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
         if (isBlocking(worker, runnable)) {
             submitBlocking(runnable)
         } else {
-            var nofity = true
+            var nofity: Boolean = true
             val rnd = ThreadLocalRandom.current
             if ((worker eq null) || worker.blocking) {
                 globalQueue.offer(runnable)
             } else if ((worker.nextRunnable eq null) && worker.localQueue.isEmpty()) {
                 val fromGlobal = globalQueue.pollUpTo(128, rnd)
-                if (fromGlobal eq null || fromGlobal.size() == 0) {
+                if ((fromGlobal eq null) || (fromGlobal.size() == 0)) {
                     worker.nextRunnable = runnable
                     notify = false
                 } else {
@@ -216,6 +216,8 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
             if ((location ne null) && (location ne emptyTrace)) {
                 if (worker eq null) globalLocations.put(location)
                 else worker.submittedLocations.put(location)
+
+                blockingLocations.contains(location)
             } else false
         } else false
 
@@ -330,7 +332,7 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                                 var i      = 0
                                 var loop   = true
                                 val offset = random.nextInt(poolSize)
-                                while (i != poolSize && loop) {
+                                while ((i != poolSize) && loop) {
                                     val index  = (i + offset) % poolSize
                                     val worker = workers(index)
                                     if ((worker ne self) && !worker.blocking) {
