@@ -200,8 +200,10 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                     val iter = runnables.iterator
                     worker.localQueue.offerAll(iter, runnables.size)
                 }
+                true
             } else {
                 worker.nextRunnable = runnable
+                false
             }
         } else {
             false

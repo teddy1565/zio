@@ -200,8 +200,10 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     val iter = runnables.iterator
                     worker.localQueue.offerAll(iter, runnables.size)
                 }
+                true
             } else {
                 worker.nextRunnable = runnable
+                false
             }
         } else {
             false
