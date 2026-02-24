@@ -191,7 +191,6 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                     worker.currentRunnable = fiberRunnable
                     fiberRunnable.run(depth)
                 } else {
-                    worker.currentRunnable = runnable
                     runnable.run()
                 }
                 val rnd = ThreadLocalRandom.current

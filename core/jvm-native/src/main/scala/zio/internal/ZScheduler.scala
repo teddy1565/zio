@@ -191,7 +191,6 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                     worker.currentRunnable = fiberRunnable
                     fiberRunnable.run(depth)
                 } else {
-                    worker.currentRunnable = runnable
                     runnable.run()
                 }
                 val rnd = ThreadLocalRandom.current
