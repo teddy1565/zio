@@ -518,6 +518,7 @@ private object ZScheduler {
 
         @volatile var currentRunnable: Runnable = null
         
+        @volatile var blocking: Boolean = false 
         val localQueue: RingBufferPow2[Runnable] = RingBufferPow2[Runnable](256)
 
         var nextRunnable: Runnable = null
