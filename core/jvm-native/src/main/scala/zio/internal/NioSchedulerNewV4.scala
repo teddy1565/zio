@@ -193,12 +193,12 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                 } else {
                     runnable.run()
                 }
-                // val rnd = ThreadLocalRandom.current
-                // val runnables = globalQueue.pollUpTo(128, rnd)
-                // if ((runnables ne null) && (runnables.size > 0)) {
-                //     val iter = runnables.iterator
-                //     worker.localQueue.offerAll(iter, runnables.size)
-                // }
+                val rnd = ThreadLocalRandom.current
+                val runnables = globalQueue.pollUpTo(128, rnd)
+                if ((runnables ne null) && (runnables.size > 0)) {
+                    val iter = runnables.iterator
+                    worker.localQueue.offerAll(iter, runnables.size)
+                }
                 true
             } else {
                 worker.nextRunnable = runnable
