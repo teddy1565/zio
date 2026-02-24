@@ -414,13 +414,13 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
                         currentOpCount += 1
                         opCount = currentOpCount
 
-                        if (localQueue.size() > 128) {
-                            val runnables = globalQueue.pollUpTo(64, random)
-                            if ((runnables ne null) && (runnables.size > 0)) {
-                                val iter = runnables.iterator
-                                localQueue.offerAll(iter, runnables.size)
-                            }
-                        }
+                        // if (localQueue.size() > 128) {
+                        //     val runnables = globalQueue.pollUpTo(64, random)
+                        //     if ((runnables ne null) && (runnables.size > 0)) {
+                        //         val iter = runnables.iterator
+                        //         localQueue.offerAll(iter, runnables.size)
+                        //     }
+                        // }
                     }
                 }
             }
@@ -525,6 +525,7 @@ private object ZScheduler {
         @volatile var currentRunnable: Runnable = null
         
         @volatile var blocking: Boolean = false 
+
         val localQueue: RingBufferPow2[Runnable] = RingBufferPow2[Runnable](256)
 
         var nextRunnable: Runnable = null
