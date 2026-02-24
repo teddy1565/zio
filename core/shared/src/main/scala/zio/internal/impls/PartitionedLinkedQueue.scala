@@ -82,6 +82,22 @@ private final class PartitionedLinkedQueue[A <: AnyRef](preferredPartitions: Int
 
   def poll(): A =
     poll(ThreadLocalRandom.current())
+  
+  def pollUpTo(n: Int, random: ThreadLocalRandom): Chunk[A] = {
+    val result = ChunkBuilder.make[A]()
+    val from = random.nextInt(nQueues)
+    var i    = 0
+    while (i < n) {
+      val idx   = (from + i) & mask
+      val task = queues(idx).poll()
+      if (task ne null) {
+        result.add(task)
+      }
+      i += 1
+    }
+
+    result
+  }
 
   def isEmpty(): Boolean = {
     val random = ThreadLocalRandom.current()
