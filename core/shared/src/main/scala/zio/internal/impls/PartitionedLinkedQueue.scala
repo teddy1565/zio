@@ -77,7 +77,7 @@ private final class PartitionedLinkedQueue[A <: AnyRef](preferredPartitions: Int
       result = queues(idx).poll()
       i += 1
     }
-    result.result()
+    result
   }
 
   def poll(): A =
@@ -96,7 +96,7 @@ private final class PartitionedLinkedQueue[A <: AnyRef](preferredPartitions: Int
       i += 1
     }
 
-    result
+    result.result()
   }
 
   def isEmpty(): Boolean = {
