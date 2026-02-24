@@ -205,6 +205,10 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         }
     }
 
+    private[this] def makeLocations(): NioScheduler.Locations =
+        if (autoBlocking) new NioScheduler.Locations.Enabled
+        else NioScheduler.Locations.Disabled
+
     private[this] def isBlocking(worker: NioScheduler.Worker, runnable: Runnable): Boolean =
         if (autoBlocking && runnable.isInstanceOf[FiberRunnable]) {
             val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
