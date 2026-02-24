@@ -91,7 +91,7 @@ private final class PartitionedLinkedQueue[A <: AnyRef](preferredPartitions: Int
       val idx   = (from + i) & mask
       val task = queues(idx).poll()
       if (task ne null) {
-        result.add(task)
+        result.addOne(task)
       }
       i += 1
     }
