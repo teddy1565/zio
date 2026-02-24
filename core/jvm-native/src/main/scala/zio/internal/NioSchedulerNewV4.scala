@@ -514,15 +514,15 @@ private object NioScheduler {
     private sealed abstract class Worker extends Thread with BlockContext {
         val submittedLocations: Locations
         
-        @Contended @volatile var action: Boolean = true
+        @volatile var active: Boolean = true
 
-        @Contended @volatile var currentRunnable: Runnable = null
+        @volatile var currentRunnable: Runnable = null
         
         val localQueue: RingBufferPow2[Runnable] = RingBufferPow2[Runnable](256)
 
         var nextRunnable: Runnable = null
 
-        @Contended @volatile var opCount: Long = 0L
+        @volatile var opCount: Long = 0L
 
         def markAsBlocking(): Unit
 
