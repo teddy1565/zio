@@ -16,7 +16,7 @@
 
 package zio.internal
 
-import zio.Chunk
+import zio.{Chunk, ChunkBuilder}
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 import java.util.concurrent.{ConcurrentLinkedQueue, ThreadLocalRandom}
