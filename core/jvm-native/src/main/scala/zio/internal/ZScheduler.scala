@@ -186,19 +186,19 @@ private final class ZScheduler(autoBlocking: Boolean) extends Executor { parent 
             }
 
             if (runnable ne null) {
+                worker.currentRunnable = runnable
                 if (runnable.isInstanceOf[FiberRunnable]) {
                     val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
-                    worker.currentRunnable = fiberRunnable
                     fiberRunnable.run(depth)
                 } else {
                     runnable.run()
                 }
-                val rnd = ThreadLocalRandom.current
-                val runnables = globalQueue.pollUpTo(128, rnd)
-                if ((runnables ne null) && (runnables.size > 0)) {
-                    val iter = runnables.iterator
-                    worker.localQueue.offerAll(iter, runnables.size)
-                }
+                // val rnd = ThreadLocalRandom.current
+                // val runnables = globalQueue.pollUpTo(128, rnd)
+                // if ((runnables ne null) && (runnables.size > 0)) {
+                //     val iter = runnables.iterator
+                //     worker.localQueue.offerAll(iter, runnables.size)
+                // }
                 true
             } else {
                 worker.nextRunnable = runnable
