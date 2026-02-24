@@ -112,6 +112,109 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
         Some(metrics)
     }
 
+    def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
+        val worker = workerOrNull()
+        if (isBlocking(worker, runnable)) {
+            submitBlocking(runnable)
+        } else {
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
+            } else if (!worker.localQueue.offer(runnable)) {
+                handleFullWorkerQueue(worker, runnable)
+            } else ()
+
+            val currentState = state.get
+            maybeUnparkWorker(currentState)
+            true
+        }
+    }
+
+    override def submitAndYield(runnable: Runnable)(implicit unsafe: Unsafe): Boolean = {
+        val worker = workerOrNull()
+        if (isBlocking(worker, runnable)) {
+            submitBlocking(runnable)
+        } else {
+            var nofity = true
+            val rnd = ThreadLocalRandom.current
+            if ((worker eq null) || worker.blocking) {
+                globalQueue.offer(runnable)
+            } else if ((worker.nextRunnable eq null) && worker.localQueue.isEmpty()) {
+                val fromGlobal = globalQueue.pollUpTo(128, rnd)
+                if (fromGlobal eq null || fromGlobal.size() == 0) {
+                    worker.nextRunnable = runnable
+                    notify = false
+                } else {
+                    worker.nextRunnable = runnable
+                    worker.localQueue.offerAll(fromGlobal)
+                }
+            } else if (!worker.localQueue.offer(runnable)) {
+                handleFullWorkerQueue(worker, runnable)
+            }
+
+            if (notify) {
+                val currentState = state.get
+                maybeUnparkWorker(currentState)
+            }
+            true
+        }
+    }
+
+    private def handleFullWorkerQueue(worker: NioScheduler.Worker, runnable: Runnable): Unit = {
+        val rnd = ThreadLocalRandom.current
+        val polled = worker.localQueue.pollUpTo(128)
+        globalQueue.offerAll(polled, rnd)
+        val accepted = worker.localQueue.offer(runnable)
+        if (!accepted) {
+            globalQueue.offer(runnable, rnd)
+        }
+    }
+
+    override def stealWork(depth: Int): Boolean = {
+        val worker = workerOrNull()
+        if (worker ne null) {
+            var runnable = null.asInstanceOf[Runnable]
+            if (worker.nextRunnable ne null) {
+                runnable = worker.nextRunnable
+                worker.nextRunnable = null
+            } else {
+                runnable = worker.localQueue.poll(null)
+                if (runnable eq null) {
+                    runnable = globalQueue.poll()
+                }
+            }
+
+            if (runnable ne null) {
+                if (runnable.isInstanceOf[FiberRunnable]) {
+                    val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+                    worker.currentRunnable = fiberRunnable
+                    fiberRunnable.run(depth)
+                } else {
+                    worker.currentRunnable = runnable
+                    runnable.run()
+                }
+                val rnd = ThreadLocalRandom.current
+                val runnables = globalQueue.pollUpTo(128, rnd)
+                if (runnables ne null) {
+                    worker.localQueue.offerAll(runnables)
+                }
+            } else {
+                worker.nextRunnable = runnable
+            }
+        } else {
+            false
+        }
+    }
+
+    private[this] def isBlocking(worker: NioScheduler.Worker, runnable: Runnable): Boolean =
+        if (autoBlocking && runnable.isInstanceOf[FiberRunnable]) {
+            val fiberRunnable = runnable.asInstanceOf[FiberRunnable]
+            val location      = fiberRunnable.location
+            if ((location ne null) && (location ne emptyTrace)) {
+                if (worker eq null) globalLocations.put(location)
+                else worker.submittedLocations.put(location)
+            } else false
+        } else false
+
     private[this] def makeSupervisor(): NioScheduler.Supervisor =
         new NioScheduler.Supervisor {
             private def countSubmittedAt(location: Trace): Long = {
@@ -169,6 +272,194 @@ private final class NioScheduler(autoBlocking: Boolean) extends Executor { paren
                 }
             }
         }
+
+    private[this] def makeWorker(): NioScheduler.Worker =
+        new NioScheduler.Worker {
+            self =>
+            override val submittedLocations: NioScheduler.Locations = makeLocations()
+
+            final override def run(): Unit = {
+                val globalQueue = parent.globalQueue
+                val workers     = parent.workers
+                val state       = parent.state
+                val cache       = parent.cache
+                val idle        = parent.idle
+                val poolSize    = NioScheduler.poolSize
+
+                var currentBlocking = false
+                var currentOpCount  = 0L
+                val random          = ThreadLocalRandom.current
+                var runnable        = null.asInstanceOf[Runnable]
+                var searching       = false
+
+                while (!isInterrupted) {
+                    currentBlocking         = blocking
+                    val currentNextRunnable = nextRunnable
+                    if (currentBlocking) ()
+                    else if (currentNextRunnable ne null) {
+                        runnable     = currentNextRunnable
+                        nextRunnable = null
+                    } else {
+                        if ((currentOpCount & 63) == 0) {
+                            runnable = globalQueue.poll(random)
+                            if (runnable eq null) {
+                                runnable = localQueue.poll(null)
+                            }
+                        } else {
+                            runnable = localQueue.poll(null)
+                            if (runnable eq null) {
+                                runnable = globalQueue.poll(random)
+                            }
+                        }
+
+                        if (runnable eq null) {
+                            if (!searching) {
+                                val currentState  = state.get
+                                val currentActive = currentState & 0xffff
+                                if (2 * currentActive < poolSize) {
+                                    state.getAndIncrement()
+                                    searching = true
+                                }
+                            }
+
+                            if (searching) {
+                                var i      = 0
+                                var loop   = true
+                                val offset = random.nextInt(poolSize)
+                                while (i != poolSize && loop) {
+                                    val index  = (i + offset) % poolSize
+                                    val worker = workers(index)
+                                    if ((worker ne self) && !worker.blocking) {
+                                        val size = worker.localQueue.size()
+                                        if (size > 0) {
+                                            val runnables  = worker.localQueue.pollUpTo(size - size / 2)
+                                            val nRunnables = runnables.size
+                                            if (nRunnables > 0) {
+                                                val iter = runnables.iterator
+                                                runnable = iter.next()
+                                                if (nRunnables > 1) localQueue.offerAll(iter, nRunnables - 1)
+                                                currentBlocking = blocking
+                                                
+                                                if (currentBlocking) {
+                                                    val runnables = localQueue.pollUpTo(256)
+                                                    if (!runnables.isEmpty) {
+                                                        globalQueue.offerAll(runnables, random)
+                                                    }
+                                                }
+                                                loop = false
+                                            }
+                                        }
+                                    }
+                                    i += 1
+                                }
+                                if (runnable eq null) {
+                                    runnable = globalQueue.poll(random)
+                                }
+                            }
+                        }
+                    }
+                    if (runnable eq null) {
+                        val currentState =
+                            if (currentBlocking && searching) state.decrementAndGet()
+                            else if (currentBlocking) state.get
+                            else if (searching) state.addAndGet(0xfffeffff)
+                            else state.addAndGet(0xffff0000)
+                        val currentSearching = currentState & 0xffff
+                        active = false
+                        if (currentBlocking) {
+                            cache.offer(self)
+                        } else {
+                            idle.offer(self)
+                        }
+                        if (currentSearching == 0 && searching) {
+                            var i      = 0
+                            var notify = false
+                            while (i != poolSize && !notify) {
+                                val worker = workers(i)
+                                notify = !worker.localQueue.isEmpty()
+                                i += 1
+                            }
+                            if (!notify) {
+                                notify = !globalQueue.isEmpty()
+                            }
+                            if (notify) {
+                                val currentState = state.get
+                                maybeUnparkWorker(currentState)
+                            }
+                        }
+                        while (!active && !isInterrupted) {
+                            LockSupport.park()
+                        }
+                        searching = true
+                    } else {
+                        if (searching) {
+                            searching = false
+                            val currentState = state.decrementAndGet()
+                            maybeUnparkWorker(currentState)
+                        }
+                        currentRunnable = runnable
+                        runnable.run()
+                        runnable = null
+                        currentRunnable = runnable
+                        currentOpCount += 1
+                        opCount = currentOpCount
+
+                        if (localQueue.size() > 128) {
+                            val runnables = globalQueue.pollUpTo(64, random)
+                            if (runnables ne null) {
+                                localQueue.offerAll(runnables)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    
+    final def markAsBlocking(): Unit = synchronized {
+        if (blocking) ()
+        else {
+            blocking = true
+            val idx = workers.indexOf(self)
+            if (idx >= 0) {
+                val runnables = self.localQueue.pollUpTo(256)
+                if (nextRunnable ne null) {
+                    globalQueue.offer(nextRunnable)
+                    nextRunnable = null
+                }
+                globalQueue.offerAll(runnables)
+                val worker = cache.poll()
+                if (worker eq null) {
+                    val worker = markWorker()
+                    worker.setName(idx)
+                    worker.setDaemon(true)
+                    workers(idx) = worker
+                    worker.start()
+                } else {
+                    state.getAndIncrement()
+                    worker.setName(idx)
+                    workers(idx) = worker
+                    worker.blocking = false
+                    worker.active = true
+                    LockSupport.unpark(worker)
+                }
+            }
+        }
+    }
+
+    private def maybeUnparkWorker(currentState: Int): Unit = {
+        val currentSearching = currentState & 0xffff
+        val currentActive    = (currentState & 0xffff0000) >> 16
+        if (currentActive != poolSize && currentSearching == 0) {
+            val worker = idle.poll()
+            if (worker ne null) {
+                state.getAndAdd(0x10001)
+                worker.active = true
+                LockSupport.unpark(worker)
+            }
+        }
+    }
+    private def submitBlocking(runnable: Runnable)(implicit unsafe: Unsafe): Boolean =
+        Blocking.blockingExecutor.submit(runnable)
 }
 
 private object NioScheduler {
@@ -218,16 +509,16 @@ private object NioScheduler {
 
     private sealed abstract class Worker extends Thread with BlockContext {
         val submittedLocations: Locations
+        
+        @Contended @volatile var action: Boolean = true
 
-        @volatile var action: Boolean = true
-
-        @volatile var currentRunnable: Runnable = null
+        @Contended @volatile var currentRunnable: Runnable = null
         
         val localQueue: RingBufferPow2[Runnable] = RingBufferPow2[Runnable](256)
 
         var nextRunnable: Runnable = null
 
-        @volatile var opCount: Long = 0L
+        @Contended @volatile var opCount: Long = 0L
 
         def markAsBlocking(): Unit
 
